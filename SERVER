@@ -1,0 +1,83 @@
+// server.js
+import express from "express";
+import nodemailer from "nodemailer";
+import cron from "node-cron";
+import fs from "fs";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+const remindersFile = "./reminders.json";
+
+// ✅ Email transporter configuration
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ✅ Helper functions for file handling
+const loadReminders = () => {
+  if (fs.existsSync(remindersFile)) {
+    return JSON.parse(fs.readFileSync(remindersFile));
+  }
+  return [];
+};
+
+const saveReminders = (reminders) => {
+  fs.writeFileSync(remindersFile, JSON.stringify(reminders, null, 2));
+};
+
+// ✅ POST API - Add a new reminder
+app.post("/reminders", (req, res) => {
+  const { email, message, date } = req.body;
+
+  if (!email || !message || !date) {
+    return res.status(400).json({ error: "Email, message, and date are required." });
+  }
+
+  const reminders = loadReminders();
+  reminders.push({ email, message, date });
+  saveReminders(reminders);
+
+  res.status(201).json({ message: "✅ Reminder added successfully!" });
+});
+
+// ✅ CRON job runs every minute to check reminders
+cron.schedule("* * * * *", () => {
+  const reminders = loadReminders();
+  const now = new Date();
+
+  reminders.forEach((reminder, index) => {
+    const reminderDate = new Date(reminder.date);
+
+    if (reminderDate <= now) {
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: reminder.email,
+        subject: "⏰ Reminder Notification",
+        text: reminder.message,
+      };
+
+      transporter.sendMail(mailOptions, (err, info) => {
+        if (err) {
+          console.error("❌ Error sending email:", err);
+        } else {
+          console.log(`📧 Reminder sent to ${reminder.email}:`, info.response);
+        }
+      });
+
+      // Remove reminder once sent
+      reminders.splice(index, 1);
+      saveReminders(reminders);
+    }
+  });
+});
+
+app.listen(PORT, () => console.log(`🚀 Email Reminder System running on port ${PORT}`));
